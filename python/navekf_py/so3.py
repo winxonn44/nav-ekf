@@ -1,7 +1,7 @@
 """SO(3) and quaternion helpers. Conventions: docs/conventions.md §3.
 
 Quaternions are Hamilton, stored ``[w, x, y, z]``. Every function except
-``right_jacobian`` and ``rot_to_quat`` broadcasts over leading axes, so the same
+``rot_to_quat`` broadcasts over leading axes, so the same
 code serves a single state (shape ``(3,)`` / ``(4,)``) and a batch of Monte Carlo
 runs (shape ``(N, 3)`` / ``(N, 4)``). Element-wise formulas are written out
 explicitly (no BLAS calls) so that the order of floating-point operations is
@@ -138,6 +138,13 @@ def right_jacobian(phi: np.ndarray) -> np.ndarray:
     It satisfies ``Exp(φ + ε) ≈ Exp(φ) Exp(J_r(φ) ε)``.
     """
     phi = np.asarray(phi, dtype=float)
+    if phi.ndim > 1:  # batched (E2 Monte Carlo): same formula and branch, per run
+        th = np.sqrt(phi[..., 0] ** 2 + phi[..., 1] ** 2 + phi[..., 2] ** 2)[..., None, None]
+        K = skew(phi)
+        small = th < SMALL_ANGLE
+        ts = np.where(small, 1.0, th)
+        reg = np.eye(3) - (1 - np.cos(ts)) / ts**2 * K + (ts - np.sin(ts)) / ts**3 * (K @ K)
+        return np.where(small, np.eye(3) - 0.5 * K, reg)
     th = float(np.linalg.norm(phi))
     K = skew(phi)
     if th < SMALL_ANGLE:

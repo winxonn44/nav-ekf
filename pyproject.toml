@@ -19,7 +19,8 @@ where = ["python"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["python"]
-markers = ["slow: Monte Carlo tests (deselect with -m 'not slow')"]
+addopts = "-m 'not slow'"  # the slow 50-run Monte Carlo: pytest -m slow
+markers = ["slow: Monte Carlo tests (run with -m slow)"]
 
 [tool.ruff]
 line-length = 130
