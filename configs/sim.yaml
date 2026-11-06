@@ -1,0 +1,39 @@
+# Simulator config for navekf_py.sim (see python/navekf_py/sim.py for every field).
+# Units are SI; frames are ENU world / FLU body (docs/conventions.md).
+duration_s: 60.0
+imu_rate_hz: 200.0        # must give an integer period in ns
+g: 9.81
+seed: 0                   # Monte Carlo run i uses seed + i
+
+trajectory:               # figure-8 with changing yaw, roll and pitch
+  period_s: 30.0
+  amp_x: 20.0
+  amp_y: 10.0
+  amp_z: 1.5
+  z0: 0.0
+  omega_z: 0.35
+  yaw0: 0.3
+  yaw_rate: 0.1
+  yaw_amp: 0.5
+  yaw_omega: 0.21
+  pitch_amp: 0.10
+  pitch_omega: 0.35
+  roll_amp: 0.15
+  roll_omega: 0.5
+  static_s: 5.0           # still and level for the first 5 s
+  ramp_s: 5.0
+
+imu_noise:                # continuous-time densities (conventions §4); EuRoC-like ADIS16448 values
+  sigma_a: 2.0e-3         # m/s²/√Hz
+  sigma_g: 1.7e-4         # rad/s/√Hz  (≈ 0.58 °/√h)
+  sigma_ba: 3.0e-3        # m/s³/√Hz
+  sigma_bg: 2.0e-5        # rad/s²/√Hz
+ba0: [0.0, 0.0, 0.0]      # initial accel bias [m/s²]
+bg0: [0.0, 0.0, 0.0]      # initial gyro bias [rad/s]
+
+gps:                      # used from E2 on
+  rate_hz: 10.0
+  sigma: 1.0              # m per axis
+  lever_arm: [0.0, 0.0, 0.0]   # antenna position in B [m]
+  dropouts:               # [start_s, end_s) windows with no fixes
+    - [30.0, 40.0]
