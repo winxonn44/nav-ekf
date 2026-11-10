@@ -1,0 +1,143 @@
+name: core
+
+# The C++ port: build and test on macOS arm64 + Linux gcc/clang, cross-language parity against
+# Python, sanitizers, lint and a benchmark smoke run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: core-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_GENERATOR: Ninja
+
+jobs:
+  build-test:
+    name: build-test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macos-arm64-appleclang, os: macos-15, cc: clang, cxx: clang++ }  # macos-14 is retired
+          - { name: ubuntu-gcc, os: ubuntu-24.04, cc: gcc, cxx: g++ }
+          - { name: ubuntu-clang, os: ubuntu-24.04, cc: clang, cxx: clang++ }
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: build-test-${{ matrix.name }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DNAVEKF_WERROR=ON
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build
+        run: cmake --build build
+      - name: ctest
+        run: ctest --test-dir build --output-on-failure
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install the Python reference
+        run: python -m pip install -e ".[dev]"
+      - name: Parity with Python
+        env:
+          NAVEKF_RUN_DATASET: build/run_dataset
+          NAVEKF_REQUIRE_BINARY: "1"
+        run: python -m pytest tests/test_cpp_parity.py -v -s
+
+  # ASan + UBSan only. TSan is skipped on purpose: the filter, the CLI and the tests start no
+  # threads, so there is nothing for it to check.
+  sanitizers:
+    name: sanitizers (asan-ubsan)
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang
+      CXX: clang++
+      ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      # Ubuntu 24.04 runners use 32 bits of mmap ASLR, which some ASan builds cannot map around.
+      - name: Reduce mmap ASLR entropy
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: sanitizers-asan-ubsan
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DNAVEKF_WERROR=ON
+          -DNAVEKF_BUILD_BENCH=OFF
+          -DNAVEKF_SANITIZE=address,undefined
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build
+        run: cmake --build build
+      - name: ctest
+        run: ctest --test-dir build --output-on-failure
+
+  lint:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      # clang-format output changes between major versions, so pin it to the one used locally.
+      - name: Install tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build clang-tidy-18
+          pipx install clang-format==23.1.3  # system pip is PEP 668-locked
+      - name: clang-format check
+        run: |
+          clang-format --version
+          git ls-files '*.hpp' '*.cpp' | xargs clang-format --dry-run --Werror --style=file
+      - name: Configure (for compile_commands.json)
+        run: cmake -S . -B build -DNAVEKF_BUILD_BENCH=OFF
+      - name: clang-tidy
+        run: |
+          git ls-files 'src/*.cpp' 'apps/*.cpp' 'tests/cpp/*.cpp' \
+            | xargs clang-tidy-18 -p build --warnings-as-errors='*'
+
+  bench-smoke:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        run: brew install ninja
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: bench-smoke
+      - name: Build benchmarks
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DNAVEKF_BUILD_TESTS=OFF -DNAVEKF_BUILD_APPS=OFF \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build --target navekf_bench
+      # To catch crashes only; real numbers come from a quiet machine on AC power.
+      - name: Run
+        run: build/navekf_bench --benchmark_min_time=0.05s

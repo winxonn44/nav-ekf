@@ -48,7 +48,7 @@ Regenerate: `python scripts/plot_drift.py` (~2 s).
 
 Code: `python/navekf_py/eskf.py` (filter, step order in its docstring), `consistency.py` (NEES/NIS,
 batched Monte Carlo, χ² bands). Tests: `pytest` runs 80 tests in ~5 s (27 new in `test_eskf.py` and
-`test_consistency.py`); `pytest -m slow` adds the 50-run test (~8 s). Choices: [`DECISIONS.md`](DECISIONS.md).
+`test_consistency.py`); `pytest -m slow` adds the multi-batch consistency test (6 batches × 50 runs, ~50 s). Choices: [`DECISIONS.md`](DECISIONS.md).
 
 ### Exactness and Jacobians
 
@@ -78,26 +78,41 @@ grid (posterior). 6 s on an M4 Air.
 | NEES (15) | **15.75** | [13.52, 16.56] | **76%** |
 | NIS (3) | **3.00** | [2.36, 3.72] | **95%** |
 
-The NIS is right on. The NEES time-average is inside its band, but this batch sits above the band for
-long stretches between 10 and 60 s, so the "inside 95% of the time" reading of "done" is **not met by
-seed 0** (76%). Two effects explain it. Neither is a modelling error.
+The table above is **one batch** (seed 0), which happens to be a low one. The NIS is right on. The NEES
+time-average is inside its band, but this batch sits above the band for long stretches between 10 and 60 s.
 
-1. **Batch-to-batch variance.** The band is per time step. Bias and attitude errors are correlated over
-   tens of seconds, so a 50-run batch wanders as a whole. Ten independent batches (seeds 0–499) give
-   NEES time-averages from 14.69 to 15.88 and 74–99% of time in band (seed 0 is one of the high ones).
-2. **The 99% gate makes the filter slightly overconfident.** Rejecting the largest 1% of innovations
-   leaves exactly those errors uncorrected. Same 500 runs, paired:
+**The right statistic is the share of time in band averaged over independent batches.** The band is per
+time step, so a consistent filter spends 95% of the time inside it *in expectation*, however correlated
+the errors are over time. Correlation (bias and attitude errors last tens of seconds) only widens the
+spread between batches; it can't lower the expected share. So one batch's 76% says little either way, and
+this correlation doesn't excuse a low average. Measured on 12 fresh batches (600 runs, seeds 10000–10599,
+`scripts/check_nees_coverage.py`, ~3 min):
+
+| 12 batches × 50 runs | NEES mean | NEES time in band (expected 95%) | batch range | NIS mean | NIS time in band |
+|---|---|---|---|---|---|
+| **gate off** (the model under test) | 15.255 ± 0.066 | **96.5% ± 0.9%** | 91–100% | 3.005 ± 0.004 | 94.9% ± 0.2% |
+| gate on (11.345) | 15.511 ± 0.067 | 91.8% ± 2.0% | 81–99% | 3.028 ± 0.012 | 94.4% ± 0.3% |
+
+(± is one standard error over batches.) **With the gate off, the E2 bands hold on average: the filter passes.**
+Two caveats, both small:
+
+1. **A real NEES excess of about 1.7% remains with the gate off** (15.255 is 3.9 standard errors above 15, and
+   it is largest at 10–60 s: 15.37 ± 0.08). A 50-run band is ±10% wide, so it passes there, but a 500-run
+   band (±3%) is tight enough to show it, which is why the pooled table below reads only 81%. The cause
+   isn't established; EKF linearization is the usual suspect.
+2. **The 99% gate adds about 1.7% more** (15.51 vs 15.26), because rejecting the largest 1% of innovations
+   leaves exactly those errors uncorrected. Earlier 500-run comparison, seeds 0–499, paired:
 
 | pooled over 500 runs (10 batches) | NEES mean | band (N = 500) | time in band | NIS mean | band | time in band |
 |---|---|---|---|---|---|---|
 | gate on (11.345) | 15.35 | [14.52, 15.48] | 67% | 3.03 | [2.79, 3.22] | 93% |
 | gate off | **15.08** | [14.52, 15.48] | 81% | **3.005** | [2.79, 3.22] | 95% |
 
-With the gate off, the 500-run NEES is 0.5% above 15 (the batch means' standard error is about 0.13),
-which is consistent. The gate costs about 2% of NEES. **Gate lock-out:** in 2 of the 500 gated runs (batch
+That 500-run set put the gate-off NEES 0.5% above 15; the 600 fresh runs above put it at 1.7%. The gate costs
+about 2% of NEES in both. **Gate lock-out:** in 2 of the 500 gated runs (batch
 5, seeds 266 and 269) the first fix after the outage failed the gate. Every later fix then failed too (≈310
 rejections each, never recovering), because the gate re-tests a large, persistent error against a
-covariance that grows no faster. That is the expected ~1%-per-outage hazard of a hard gate, and an E6 item
+covariance that grows no faster. That is the expected ~1%-per-outage hazard of a hard gate, and an E5 (fault injection) item
 (e.g. re-open after N consecutive rejections, or a wider gate on the first fix after an outage).
 
 Per-state view (500 runs, gate on, mean of `e²/σ²` by phase): every component is between 0.81 and 1.15.
@@ -154,3 +169,66 @@ the baseline at any time.
 
 Regenerate: `python scripts/run_consistency.py` (~4 min with the 10-batch study; `--batches 0 --no-ablations`
 for the figures only, ~7 s).
+
+## E3: C++20/Eigen port
+
+The C++ filter (`include/navekf`, `src`) reproduces the Python filter at every IMU step and every update.
+
+### Parity with Python
+
+`run_dataset --parity` against Python's per-step output (`tests/test_cpp_parity.py`, `pytest -s` prints this table's
+numbers). Compared on every row: all 16 state numbers with `q` raw (no sign fix), the 120 upper-triangle entries of `P`,
+NIS, timestamps, row kinds and each gate decision. Limit: 1e-9. All gate decisions match exactly.
+
+| scenario | stream | rows | updates | rejected | max \|Δstate\| | max \|ΔP\| | max \|ΔNIS\| |
+|---|---|---|---|---|---|---|---|
+| noise-free 20 s golden | consistent | 4201 | 201 | 0 | 3.6e-15 | 1.5e-16 | 4.3e-28 |
+| noisy 40 s, 10 s dropout, 3 outliers | consistent | 8301 | 301 | 7 | 5.6e-14 | 1.1e-13 | 3.5e-14 |
+| post-outage lock-out, 10 s | consistent | 2081 | 81 | 51 | 1.8e-15 | 3.6e-15 | 1.1e-13 |
+| first order, `J_r` reset, 10 s | analytic | 2101 | 101 | 3 | 6.1e-16 | 8.3e-17 | 1.8e-15 |
+| first order, identity reset | analytic | 2101 | 101 | 3 | 8.9e-16 | 5.6e-17 | 2.2e-15 |
+| second order, `J_r` reset | analytic | 2101 | 101 | 3 | 1.8e-15 | 8.3e-17 | 3.6e-15 |
+| second order, identity reset | analytic | 2101 | 101 | 3 | 4.4e-16 | 8.3e-17 | 1.8e-15 |
+| Van Loan, `J_r` reset | analytic | 2101 | 101 | 3 | 1.2e-14 | 2.1e-15 | 1.8e-12 |
+| Van Loan, identity reset | analytic | 2101 | 101 | 3 | 1.8e-14 | 3.2e-15 | 3.2e-12 |
+| gate off | analytic | 2101 | 101 | 0 | 2.2e-16 | 8.3e-17 | 3.6e-15 |
+
+Measured on the AppleClang RelWithDebInfo build; the Release (`-O3`) and ASan+UBSan builds also pass the same 12 pytest
+tests. The check can fail: running C++ with the `J_r` reset changed to identity, the discretization changed to second
+order, the gate off, or `g` raised by 1e-9 gives state differences of 4.6e-5, 3.5e-4, 1.1 and 3.5e-9 m against the
+same Python log. Python used numpy 2.5.4 with Accelerate.
+
+### Cost per step
+
+Median of 20 repetitions of `navekf_bench`, each at least 0.05 s, in µs:
+
+| operation | µs (median) | CV | heap allocations |
+|---|---|---|---|
+| propagate, first order | **1.21** | 0.2% | 0 |
+| propagate, second order | 2.16 | 0.2% | 0 |
+| propagate, Van Loan (30×30 expm) | 11.5 | 0.2% | 0 |
+| update, accepted (Joseph + injection + reset) | **1.86** | 0.3% | 0 |
+| update, rejected by the gate | 0.226 | 0.3% | 0 |
+
+Conditions: Apple M4 MacBook Air (fanless, 16 GB), macOS 26.2, on **AC power** (`pmset -g batt` before and after, charging at 67%),
+no thermal warnings recorded, load average about 5 from the desktop app and other open sessions. AppleClang 17.0.0,
+`-O3 -DNDEBUG -std=c++20 -ffp-contract=off`, no `-march` flag, Eigen 3.4.0 with its NEON code paths. Two full runs agreed within
+1% (the first had a load average near 10). The reset every 1024 iterations that keeps `P` bounded is inside the timed loop.
+At 200 Hz IMU with 10 Hz GPS the first-order filter uses about 0.03% of one core.
+
+### Other checks
+
+- GoogleTest: 55 tests (46 filter + 9 no-heap) with `-Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror` on AppleClang, and under
+  ASan+UBSan. They need no Python.
+- `tests/cpp/test_no_alloc.cpp` shows no heap allocation in `propagate`, `update_position`, `inject_and_reset` or `run`, for each
+  discretization and reset, including the rejection path.
+
+Regenerate:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build build
+ctest --test-dir build
+pytest -s tests/test_cpp_parity.py
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DNAVEKF_BUILD_TESTS=OFF && cmake --build build-release
+build-release/navekf_bench --benchmark_repetitions=20 --benchmark_report_aggregates_only=true --benchmark_min_time=0.05s
+```

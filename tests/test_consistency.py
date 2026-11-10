@@ -62,16 +62,22 @@ def test_false_rejection_rate_is_about_one_percent(smoke):
 
 
 @pytest.mark.slow
-def test_full_monte_carlo_50_runs_with_30s_dropout():
-    """The E2 headline: 50 runs × 120 s with a 30 s dropout (configs/e2_consistency.yaml), ~6 s."""
+def test_50_run_bands_hold_on_average_over_batches():
+    """The E2 headline: NEES/NIS of 50-run batches × 120 s with a 30 s dropout, gate off, ~40 s.
+
+    The band is per time step, so a consistent filter spends 95% of the time inside it on average,
+    however correlated the errors are; correlation only widens the spread between batches (one batch
+    has been seen as low as 76%). So the test averages over independent batches. The batch-to-batch
+    std of the NEES share is about 3 points (12 batches, scripts/check_nees_coverage.py), so with 6
+    batches 3 standard errors below 95% is 91%. The gate is off because it deliberately truncates
+    the innovations; its effect is reported separately. Seeds are not used anywhere else.
+    """
     cfg = sim.load_config(ROOT / "configs" / "e2_consistency.yaml")
     assert any(b - a >= 30 for a, b in cfg.gps.dropouts)
-    s = c.summarize(c.monte_carlo(c.McConfig(sim=cfg, n_runs=50, seed=0)))
-    lo, hi = s["nees_band"]
-    assert lo < s["nees_mean"] < hi
-    lo, hi = s["nis_band"]
-    assert lo < s["nis_mean"] < hi
-    # the band is per time step; errors are correlated in time, so one 50-run batch can sit near an edge
-    # for tens of seconds (see docs/results.md, E2 batch table). Require most of the time inside.
-    assert s["nees_in_band"] >= 0.70
-    assert s["nis_in_band"] >= 0.90
+    batches = [c.summarize(c.monte_carlo(c.McConfig(sim=cfg, n_runs=50, seed=20000 + 50 * b, gate=None))) for b in range(6)]
+    lo, hi = batches[0]["nees_band"]
+    assert lo < np.mean([s["nees_mean"] for s in batches]) < hi
+    lo, hi = batches[0]["nis_band"]
+    assert lo < np.mean([s["nis_mean"] for s in batches]) < hi
+    assert np.mean([s["nees_in_band"] for s in batches]) >= 0.91
+    assert np.mean([s["nis_in_band"] for s in batches]) >= 0.93

@@ -1,0 +1,34 @@
+---
+# Same check families as voronav's core. Each exclusion below says why it is off.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  cppcoreguidelines-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-nodiscard,
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-no-malloc,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-avoid-do-while
+# Why the exclusions:
+#   use-trailing-return-type    style only; the code uses `T f()`.
+#   use-nodiscard               applied by hand where ignoring a result is a bug.
+#   easily-swappable-parameters (x, dt) and (x_hat, x) pairs are everywhere in the math.
+#   avoid-magic-numbers         the math and the test sizes are literal by design.
+#   avoid-non-const-global-variables, owning-memory, avoid-do-while
+#                               GoogleTest / Google Benchmark macros expand to these.
+#   no-malloc                   the allocation-counting replacements of operator new need malloc.
+#   pro-type-vararg             run_dataset uses fprintf for exact %.17g output.
+#   pro-bounds-pointer-arithmetic  argv walking in run_dataset.
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*/(include/navekf|src|tests/cpp|bench|apps)/.*'
+FormatStyle: file
+CheckOptions:
+  - key: cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor
+    value: true
