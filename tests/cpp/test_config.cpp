@@ -25,7 +25,7 @@ TEST(Config, DefaultsMatchPython) {
   EXPECT_EQ(c.eskf.discretization, Discretization::kFirst);
   EXPECT_EQ(c.eskf.reset, Reset::kJr);
   ASSERT_TRUE(c.eskf.gate.has_value());
-  EXPECT_EQ(*c.eskf.gate, kGate99_3dof);
+  EXPECT_EQ(c.eskf.gate.value_or(-1.0), kGate99_3dof);
   EXPECT_FALSE(c.eskf.check_psd);
   EXPECT_EQ(c.x0.p, Vec3(1.0, 2.0, 3.0));
   EXPECT_EQ(c.P0(14, 14), 15.0);
@@ -60,7 +60,7 @@ TEST(Config, FullPrecisionNumbersRoundTripBitForBit) {
     (void)std::snprintf(buf, sizeof(buf), "%.17g", value);
     const RunConfig c = parse_config(std::string("filter: {gate: ") + buf + "}\n" + kInitial);
     ASSERT_TRUE(c.eskf.gate.has_value());
-    EXPECT_EQ(*c.eskf.gate, value) << buf;
+    EXPECT_EQ(c.eskf.gate.value_or(-1.0), value) << buf;
   }
 }
 

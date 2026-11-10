@@ -88,7 +88,7 @@ struct UpdateResult {
 
 class Eskf {
  public:
-  Eskf(const State& x0, const Mat15& P0, const EskfConfig& cfg, std::int64_t t0_ns = 0);
+  Eskf(State x0, const Mat15& P0, const EskfConfig& cfg, std::int64_t t0_ns = 0);
 
   /// One IMU step. Without t_next_ns the new time is imu.t_ns + round(dt·1e9).
   void propagate(const ImuSample& imu, double dt,

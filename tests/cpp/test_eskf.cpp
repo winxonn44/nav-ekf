@@ -107,7 +107,7 @@ TEST(Filter, NoiseFreeTracksTruthExactly) {
   EXPECT_LT(max_y, 1e-9);
   EXPECT_EQ(f.rejections(), 0U);
   ASSERT_TRUE(f.min_eig().has_value());
-  EXPECT_GT(*f.min_eig(), 0.0);
+  EXPECT_GT(f.min_eig().value_or(-1.0), 0.0);
 }
 
 TEST(Filter, QuaternionStaysNormalized) {

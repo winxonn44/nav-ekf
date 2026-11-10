@@ -47,12 +47,35 @@ void* counted_aligned(const std::size_t n, const std::align_val_t a) {
   }
   return p;
 }
+
+template <class Alloc>
+void* nothrow_alloc(const Alloc& alloc) noexcept {
+  try {
+    return alloc();
+  } catch (const std::bad_alloc&) {
+    return nullptr;
+  }
+}
 }  // namespace
 
+// The whole replaceable family, nothrow forms included: a nothrow new left to the runtime is
+// freed by the delete below, a mismatch (std::get_temporary_buffer uses nothrow new).
 void* operator new(std::size_t n) { return counted_malloc(n); }
 void* operator new[](std::size_t n) { return counted_malloc(n); }
 void* operator new(std::size_t n, std::align_val_t a) { return counted_aligned(n, a); }
 void* operator new[](std::size_t n, std::align_val_t a) { return counted_aligned(n, a); }
+void* operator new(std::size_t n, const std::nothrow_t&) noexcept {
+  return nothrow_alloc([n] { return counted_malloc(n); });
+}
+void* operator new[](std::size_t n, const std::nothrow_t&) noexcept {
+  return nothrow_alloc([n] { return counted_malloc(n); });
+}
+void* operator new(std::size_t n, std::align_val_t a, const std::nothrow_t&) noexcept {
+  return nothrow_alloc([n, a] { return counted_aligned(n, a); });
+}
+void* operator new[](std::size_t n, std::align_val_t a, const std::nothrow_t&) noexcept {
+  return nothrow_alloc([n, a] { return counted_aligned(n, a); });
+}
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
@@ -61,6 +84,10 @@ void operator delete(void* p, std::align_val_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::align_val_t) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
+void operator delete(void* p, const std::nothrow_t&) noexcept { std::free(p); }
+void operator delete[](void* p, const std::nothrow_t&) noexcept { std::free(p); }
+void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free(p); }
+void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free(p); }
 
 namespace navekf {
 namespace {
@@ -122,7 +149,7 @@ INSTANTIATE_TEST_SUITE_P(
                       Options{Discretization::kSecond, Reset::kIdentity, false},
                       Options{Discretization::kVanLoan, Reset::kJr, false},
                       Options{Discretization::kVanLoan, Reset::kIdentity, false}),
-    [](const auto& info) { return std::to_string(info.index); });
+    [](const auto& param) { return std::to_string(param.index); });
 
 TEST(NoAllocControl, OperatorNewCounterSeesAnAllocation) {
   const std::size_t before = g_new_calls.load();

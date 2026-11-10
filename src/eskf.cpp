@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
+#include <utility>
 
 #include "navekf/so3.hpp"
 
@@ -94,8 +95,8 @@ Mat15 reset_jacobian(const Vec3& dth, const Reset method) {
   return gr;
 }
 
-Eskf::Eskf(const State& x0, const Mat15& P0, const EskfConfig& cfg, const std::int64_t t0_ns)
-    : cfg_(cfg), x_(x0), P_(sym<kNErr>(P0)), Qc_(cfg.noise.Qc()), t_ns_(t0_ns) {
+Eskf::Eskf(State x0, const Mat15& P0, const EskfConfig& cfg, const std::int64_t t0_ns)
+    : cfg_(cfg), x_(std::move(x0)), P_(sym<kNErr>(P0)), Qc_(cfg.noise.Qc()), t_ns_(t0_ns) {
   x_.q = so3::quat_normalize(x_.q);
   check();
 }

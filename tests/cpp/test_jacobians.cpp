@@ -140,7 +140,7 @@ TEST_P(ResetJacobian, MatchesFiniteDifferences) {
 INSTANTIATE_TEST_SUITE_P(Angles, ResetJacobian,
                          ::testing::Values(Vec3(0.1, -0.2, 0.15), Vec3(1e-3, 2e-3, -1e-3),
                                            Vec3(0.0, 0.0, 0.0)),
-                         [](const auto& info) { return std::to_string(info.index); });
+                         [](const auto& param) { return std::to_string(param.index); });
 
 struct OrderCase {
   Discretization method;
@@ -171,7 +171,7 @@ TEST_P(DiscretizationOrder, ErrorShrinksAtTheRightRate) {
 INSTANTIATE_TEST_SUITE_P(Methods, DiscretizationOrder,
                          ::testing::Values(OrderCase{Discretization::kFirst, 2.0},
                                            OrderCase{Discretization::kSecond, 3.0}),
-                         [](const auto& info) { return std::to_string(info.index); });
+                         [](const auto& param) { return std::to_string(param.index); });
 
 TEST(Discretization, VanLoanMatchesExpmAndQuadrature) {
   const Jacobians J = jacobians(random_state(), sample_imu());

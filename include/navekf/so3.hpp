@@ -25,17 +25,17 @@ inline Mat3 skew(const Vec3& a) {
 inline Quat quat_mul(const Quat& p, const Quat& q) {
   const double pw = p(0), px = p(1), py = p(2), pz = p(3);
   const double qw = q(0), qx = q(1), qy = q(2), qz = q(3);
-  return Quat(pw * qw - px * qx - py * qy - pz * qz,  //
-              pw * qx + px * qw + py * qz - pz * qy,  //
-              pw * qy - px * qz + py * qw + pz * qx,  //
-              pw * qz + px * qy - py * qx + pz * qw);
+  return {pw * qw - px * qx - py * qy - pz * qz,  //
+          pw * qx + px * qw + py * qz - pz * qy,  //
+          pw * qy - px * qz + py * qw + pz * qx,  //
+          pw * qz + px * qy - py * qx + pz * qw};
 }
 
-inline Quat quat_conj(const Quat& q) { return Quat(q(0), -q(1), -q(2), -q(3)); }
+inline Quat quat_conj(const Quat& q) { return {q(0), -q(1), -q(2), -q(3)}; }
 
 inline Quat quat_normalize(const Quat& q) {
   const double n = std::sqrt(q(0) * q(0) + q(1) * q(1) + q(2) * q(2) + q(3) * q(3));
-  return Quat(q(0) / n, q(1) / n, q(2) / n, q(3) / n);
+  return {q(0) / n, q(1) / n, q(2) / n, q(3) / n};
 }
 
 /// Sign-fixed copy with w ≥ 0. Only for comparing and logging (conventions §3).
@@ -53,10 +53,8 @@ inline Mat3 quat_to_rot(const Quat& q) {
 
 /// The only way into Eigen's quaternion type: its constructor takes (w, x, y, z), its
 /// storage (.coeffs()) is [x, y, z, w]. Never hand .coeffs() or .data() across a boundary.
-inline Eigen::Quaterniond to_eigen(const Quat& q) {
-  return Eigen::Quaterniond(q(0), q(1), q(2), q(3));
-}
-inline Quat from_eigen(const Eigen::Quaterniond& q) { return Quat(q.w(), q.x(), q.y(), q.z()); }
+inline Eigen::Quaterniond to_eigen(const Quat& q) { return {q(0), q(1), q(2), q(3)}; }
+inline Quat from_eigen(const Eigen::Quaterniond& q) { return {q.w(), q.x(), q.y(), q.z()}; }
 
 /// Exp(φ): rotation vector -> unit quaternion. Regular branch [cos(θ/2), sin(θ/2) φ/θ] (not
 /// re-normalized); for θ < 1e-8 the Taylor form [1 − θ²/8, φ/2 (1 − θ²/24)], then normalized.
@@ -69,7 +67,7 @@ inline Quat Exp(const Vec3& phi) {
         Quat(1.0 - th2 / 8.0, 0.5 * phi(0) * c, 0.5 * phi(1) * c, 0.5 * phi(2) * c));
   }
   const double s = std::sin(0.5 * th) / th;
-  return Quat(std::cos(0.5 * th), s * phi(0), s * phi(1), s * phi(2));
+  return {std::cos(0.5 * th), s * phi(0), s * phi(1), s * phi(2)};
 }
 
 /// Log(q): unit quaternion -> rotation vector with ‖φ‖ ≤ π. Flips q -> −q when w < 0, then
@@ -81,7 +79,7 @@ inline Vec3 Log(const Quat& q_in) {
   const double n = std::sqrt(n2);
   const double scale = n < kSmallAngle ? 2.0 / w * (1.0 - n2 / (3.0 * w * w))  //
                                        : 2.0 * std::atan2(n, w) / n;
-  return Vec3(scale * q(1), scale * q(2), scale * q(3));
+  return {scale * q(1), scale * q(2), scale * q(3)};
 }
 
 /// Exp(φ) as a rotation matrix, via the quaternion.

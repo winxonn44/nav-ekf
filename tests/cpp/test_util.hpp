@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <numbers>
 #include <vector>
 
 #include "navekf/eskf.hpp"
@@ -42,10 +43,10 @@ class Rng {
     const double a = normal();
     const double b = normal();
     const double c = normal();
-    return Vec3(a, b, c);
+    return {a, b, c};
   }
 
-  static constexpr double kPi = 3.14159265358979323846;
+  static constexpr double kPi = std::numbers::pi;
 
  private:
   std::uint64_t s_;
@@ -60,7 +61,7 @@ inline ImuNoise default_noise() {  // configs/sim.yaml
   return n;
 }
 
-inline Vec3 lever_arm() { return Vec3(0.3, -0.2, 0.5); }
+inline Vec3 lever_arm() { return {0.3, -0.2, 0.5}; }
 
 /// consistency.P0_DEFAULT: p 2 m, v 0.2 m/s, roll/pitch 0.02 rad, yaw 0.05 rad, b_a 0.05, b_g 2e-3.
 inline Mat15 default_P0() {

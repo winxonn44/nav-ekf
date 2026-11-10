@@ -23,7 +23,12 @@ void check_keys(const YAML::Node& node, const std::string& where,
   for (const auto& kv : node) {
     const auto key = kv.first.as<std::string>();
     if (std::find(allowed.begin(), allowed.end(), key) == allowed.end()) {
-      throw std::runtime_error("config: unknown key `" + key + "` in `" + where + "`");
+      std::string msg = "config: unknown key `";
+      msg += key;
+      msg += "` in `";
+      msg += where;
+      msg += "`";
+      throw std::runtime_error(msg);
     }
   }
 }

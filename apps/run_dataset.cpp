@@ -56,6 +56,14 @@ File open_out(const std::string& path) {
   return f;
 }
 
+std::string csv_error(const char* what, const std::string& where, const std::string& line) {
+  std::string msg(what);
+  msg += where;
+  msg += ": ";
+  msg += line;
+  return msg;
+}
+
 /// Splits "t_ns,a,b,..." into an integer time and exactly N doubles (strtod: correctly rounded).
 template <std::size_t N>
 std::int64_t parse_row(const std::string& line, std::array<double, N>& out,
@@ -69,12 +77,12 @@ std::int64_t parse_row(const std::string& line, std::array<double, N>& out,
   p = end;
   for (std::size_t i = 0; i < N; ++i) {
     if (*p != ',') {
-      throw std::runtime_error("too few columns in " + where + ": " + line);
+      throw std::runtime_error(csv_error("too few columns in ", where, line));
     }
     ++p;
     out.at(i) = std::strtod(p, &end);
     if (end == p) {
-      throw std::runtime_error("bad number in " + where + ": " + line);
+      throw std::runtime_error(csv_error("bad number in ", where, line));
     }
     p = end;
   }
@@ -82,7 +90,7 @@ std::int64_t parse_row(const std::string& line, std::array<double, N>& out,
 }
 
 template <std::size_t N, class Row>
-void read_csv(const std::string& path, Row&& row) {
+void read_csv(const std::string& path, const Row& row) {
   std::ifstream in(path);
   if (!in) {
     throw std::runtime_error("cannot read " + path);
