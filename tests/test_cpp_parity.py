@@ -13,8 +13,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from navekf_py import parity
+from navekf_py import eskf, euroc, euroc_eval, parity
+from navekf_py.euroc_fixture import FixtureConfig, write_fixture
 from navekf_py.io import read_tum
+from navekf_py.types import ImuNoise
 
 TOL = 1e-9
 REPO = Path(__file__).resolve().parents[1]
@@ -104,3 +106,27 @@ def test_tum_quaternion_order_and_default_log(binary, tmp_path):
     head = (d / "a.csv").read_text().splitlines()[0].split(",")
     assert len(head) == 2 + 16 + 15 + 2
     assert head[-2:] == ["nis", "accepted"]
+
+
+def test_cpp_matches_python_on_euroc_layout_fixture(binary, tmp_path):
+    """The E4 chain (loader, init, seeded fixes, a 10 s outage) runs identically through both filters."""
+    noise = ImuNoise(sigma_a=2e-3, sigma_g=1.7e-4, sigma_ba=3e-3, sigma_bg=2e-5)
+    seq = euroc.load_sequence(tmp_path, write_fixture(tmp_path, FixtureConfig(duration_s=30.0, noise=noise, x_up=True, seed=11)))
+    cfg = eskf.EskfConfig(noise=noise, g=9.81)
+    setup = euroc.prepare_run(seq, 0, euroc.InitConfig(), euroc.FixConfig(rate_hz=10.0, sigma=0.1, seed=3), cfg)
+    t0 = int(setup.imu.t_ns[0])
+    window = (t0 + 8 * euroc.NS_PER_S, t0 + 18 * euroc.NS_PER_S)
+    fixes = euroc.drop_fixes(setup.fixes, window)
+    case = euroc_eval.as_case(setup, fixes)
+    py = parity.run_python(case)
+
+    d = tmp_path / "parity"
+    parity.write_case(case, d)
+    parity.write_python_log(d / "python_log.csv", py)
+    cpp = euroc_eval.run_cpp(binary, d / "imu.csv", d / "gps.csv", d / "config.yaml", d, parity_mode=True)
+
+    assert cpp.shape == py.shape
+    np.testing.assert_array_equal(cpp[:, 0:2], py[:, 0:2])
+    np.testing.assert_array_equal(cpp[:, -1], py[:, -1])
+    assert np.abs(cpp[:, IX_STATE] - py[:, IX_STATE]).max() <= TOL
+    assert np.abs(cpp[:, IX_P] - py[:, IX_P]).max() <= TOL

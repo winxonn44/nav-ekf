@@ -12,6 +12,7 @@ dependencies = ["numpy>=1.26", "scipy>=1.11", "matplotlib>=3.8", "pyyaml>=6.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+eval = ["evo>=1.38"]  # scripts/run_euroc.py only; not part of CI
 
 [tool.setuptools.packages.find]
 where = ["python"]

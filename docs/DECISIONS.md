@@ -47,3 +47,21 @@ One line per choice that the spec left open, newest checkpoint last. Format:
 - **Golden files are generated in pytest's temp directory, never stored**: about 90 MB of text for the 10 scenarios. (`tests/test_cpp_parity.py`)
 - **TSan is not run**: the filter, the CLI and the tests start no threads. (`.github/workflows/core.yml`)
 - **`J_r`'s behaviour just above the small-angle threshold is ported unchanged**: for `θ` slightly over 1e-8, `1 − cos θ` is exactly 0 in `double`, so the regular branch drops the `−½[φ]×` term, a jump of about `½θ` (≈ 5e-9). Same in both languages and harmless at this size. (`so3.hpp`)
+
+## E4: EuRoC machine hall
+
+- **Filter body frame = the IMU frame; world = EuRoC's frame directly**: `T_BS` is the identity in both yaml files, the gyro matches the ground-truth rate within 0.01°, and the frame is gravity-aligned to 0.004°. The loader applies a rotation-only `T_BS` and raises on translation, which would need angular-rate terms. (`euroc.py`)
+- **Static init = ground-truth attitude plus the smallest rotation putting measured gravity on +z**: this IMU has x up, so ZYX roll/pitch from `eskf.static_init` is near gimbal lock. (`euroc.static_init_tilt_corrected`)
+- **Filter starts at the end of the first still segment**, not at the start of the data: four of five sequences do not begin still. Thresholds (0.1 m/s², 0.01 rad/s, 1 s) are about 3.5× and 4× the white noise and were fixed before the first filter run; they are a judgement call. (`configs/euroc.yaml`)
+- **Fixes: 10 Hz on every 20th IMU sample, σ = 0.10 m per axis, ground truth interpolated at IMU timestamps**: about 1% of the room extent, the order of a good indoor beacon system. A 1 m sigma would be too large for an 8-19 m room. Fixes on IMU times avoid the split-step that E3 flagged as a possible need; ground truth is within 256 ns of IMU samples. (`euroc.synthesize_fixes`)
+- **Seeded by `SeedSequence(seed + i, spawn_key=...)`**: fix noise and the initial position are independent streams. (`euroc.py`, conventions §8)
+- **Gyro bias `P₀` widened to `σ = 2e-3` rad/s**: the averaging-noise term is about 1e-4, smaller than the measured 1.4e-3 gap between still means and the ground-truth batch biases. Decided from the data before the first filter run. (`euroc.build_P0`)
+- **`P₀` yaw `σ = 0.02` rad is a guess**: ground-truth attitude accuracy is unpublished. (`configs/euroc.yaml`)
+- **Outage windows by rule (20 s warm-up, 5 s between and after), one run per window**, so every window starts from a filter that has seen the same earlier fixes. (`euroc.outage_windows`)
+- **Envelope checks defined up front**: norm (`‖e‖ > 3√tr P_pp`, the line on the plot) and per-axis (`|e_i| > 3σ_i`), both reported.
+- **Gate left on (99%) in every run**: it is how the filter runs. The post-outage lock-out it produces is reported, and fixing it (a re-acquisition rule) is left for the robustness checkpoint, because a fix here would change what the outage drift means.
+- **C++ runs the sweep, Python runs the agreement check**: about 40 s instead of minutes on a fanless machine. Same CSV inputs and config for both; `run_dataset` needed no changes. (`scripts/run_euroc.py`)
+- **evo through its Python API, optional extra `eval`, imported only by `evo_metrics`**: the core CI path does not install it, and its one test skips without it. RPE uses 200 frames (1 s at 200 Hz) because evo has no seconds unit for RPE. (`euroc_eval.py`)
+- **Parity tolerance read as absolute and relative**: after a long outage `P` has entries of order 1e4 m² and `|ΔP|` reaches 2e-8, so the table gives both `max|ΔP|` and `max|ΔP| / max|P|`. The CI parity test on the fixture stays at 1e-9.
+- **Diagnostics are a separate script, and the ×30 noise run is opt-in** (`--scale-imu-white`, refuses `--write-results`): it is not tuned baseline and must not become one by accident. (`scripts/diagnose_euroc.py`, `scripts/run_euroc.py`)
+- **Outage results are also reported over 10 fix-noise seeds** (`fixes.seed + 100·j`, opt-in `--seed-spread`, count fixed before running): a single draw moved one sequence's 60 s drift by tens of percent. Seed 0 stays the reported baseline and must reproduce exactly; the spread covers fix noise only, not other flights. (`scripts/run_euroc.py`, `euroc_eval.seed_spread`)

@@ -5,3 +5,7 @@ __pycache__/
 .venv/
 build/
 build-*/
+.DS_Store
+# EuRoC data and everything derived from it stay out of git (see docs/data.md)
+results/
+datasets/

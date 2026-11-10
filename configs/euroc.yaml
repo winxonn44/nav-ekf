@@ -1,0 +1,49 @@
+# E4: EuRoC MAV machine-hall sequences (scripts/run_euroc.py, docs/results.md).
+# Units are SI. World is EuRoC's Leica frame R (checked z up and gravity-aligned, docs/results.md);
+# body is the IMU frame (T_BS = identity in sensor.yaml; ADIS x axis points roughly up on this MAV).
+sequences: [MH_01_easy, MH_02_easy, MH_03_medium, MH_04_difficult, MH_05_difficult]
+
+g: 9.81                     # conventions §4 default. The ground-truth batch implies ~9.808; the filter absorbs the rest in b_a.
+
+# UNTUNED. Copied from imu0/sensor.yaml (identical in all five sequences); run_euroc.py checks that they still
+# match the file. Tuning and Allan variance are E5.
+imu_noise:
+  sigma_a: 2.0e-3           # accelerometer_noise_density  [m/s²/√Hz]
+  sigma_g: 1.6968e-4        # gyroscope_noise_density      [rad/s/√Hz]
+  sigma_ba: 3.0e-3          # accelerometer_random_walk    [m/s³/√Hz]
+  sigma_bg: 1.9393e-5       # gyroscope_random_walk        [rad/s²/√Hz]
+
+# Synthetic position fixes: ground truth + white Gaussian noise (fixes are NOT measurements of anything real).
+# Rate: 10 Hz, the same as the simulated GPS, on every 20th IMU sample. Sigma: 0.10 m per axis, the order of a good
+# indoor radio or beacon positioning system and about 1% of the 8-19 m room extent. A 1 m GPS-like sigma would be
+# as large as the motion between most fixes.
+fixes:
+  rate_hz: 10.0
+  sigma: 0.10               # m per axis
+  seed: 0                   # sequence i uses seed + i (conventions §8)
+
+# Fix outages, one filter run per window. First window starts warmup_s after the filter does (so biases have been
+# observed); windows follow each other with recovery_s between them, and the last one must end recovery_s before
+# ground truth does. All of this is decided before looking at any outage error.
+outages:
+  durations_s: [10.0, 30.0, 60.0]
+  warmup_s: 20.0
+  recovery_s: 5.0
+  fix_seeds: 10             # scripts/run_euroc.py --seed-spread: fix-noise seeds per window, fixed before running it
+
+# Static initialization (design B2). Stillness is measured on the IMU alone: every 0.5 s window with the per-axis
+# accel std below acc_std_max and gyro std below gyro_std_max, about 3.5x and 4x the sensor.yaml white noise at 200 Hz.
+init:
+  window_s: 0.5
+  min_still_s: 1.0
+  acc_std_max: 0.1          # m/s²
+  gyro_std_max: 0.01        # rad/s
+  sigma_ba0: 0.1            # m/s² per axis: ground-truth batch biases are up to 0.145; b_a starts at 0
+  sigma_bg0: 2.0e-3         # rad/s per axis: still-time gyro means differ from the ground-truth batch biases by up to 1.4e-3
+  sigma_yaw: 0.02           # rad: yaw comes from ground truth, whose attitude accuracy is unpublished; a guess, not a measurement
+  sigma_v: 0.01             # m/s: ground-truth speed during the still windows is below 0.005
+
+filter:
+  discretization: first
+  reset: jr
+  gate: 11.344866730144373  # chi²(3) at 99%

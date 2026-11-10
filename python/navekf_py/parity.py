@@ -149,7 +149,7 @@ def _yaml_list(a: np.ndarray) -> str:
     return "[" + ", ".join(f"{float(v):.17g}" for v in np.ravel(a)) + "]"
 
 
-def _config_yaml(case: Case) -> str:
+def config_yaml(case: Case) -> str:
     c, x = case.cfg, case.x0
     gate = "null" if c.gate is None else f"{c.gate:.17g}"
     n = c.noise
@@ -186,21 +186,39 @@ def run_python(case: Case) -> np.ndarray:
     )
 
 
-def export(name: str, out_dir: str | Path) -> tuple[Case, np.ndarray]:
-    """Write a scenario's four files to ``out_dir``; returns the case and Python's rows."""
+def write_imu_csv(path: str | Path, imu: ImuStream) -> None:
+    with open(path, "w") as fh:
+        fh.write("t_ns,ax,ay,az,wx,wy,wz\n")
+        for t, a, w in zip(imu.t_ns, imu.acc, imu.gyr, strict=True):
+            fh.write(f"{int(t)},{a[0]:.17g},{a[1]:.17g},{a[2]:.17g},{w[0]:.17g},{w[1]:.17g},{w[2]:.17g}\n")
+
+
+def write_gps_csv(path: str | Path, fixes: list[PositionFix]) -> None:
+    with open(path, "w") as fh:
+        fh.write("t_ns,x,y,z,sigma\n")
+        for f in fixes:
+            fh.write(f"{int(f.t_ns)},{f.p_W[0]:.17g},{f.p_W[1]:.17g},{f.p_W[2]:.17g},{f.sigma:.17g}\n")
+
+
+def write_case(case: Case, out_dir: str | Path) -> Path:
+    """Write ``imu.csv``, ``gps.csv`` and ``config.yaml`` (the inputs of ``apps/run_dataset``) to ``out_dir``."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    case = SCENARIOS[name]()
-    with open(out / "imu.csv", "w") as fh:
-        fh.write("t_ns,ax,ay,az,wx,wy,wz\n")
-        for t, a, w in zip(case.imu.t_ns, case.imu.acc, case.imu.gyr, strict=True):
-            fh.write(f"{int(t)},{a[0]:.17g},{a[1]:.17g},{a[2]:.17g},{w[0]:.17g},{w[1]:.17g},{w[2]:.17g}\n")
-    with open(out / "gps.csv", "w") as fh:
-        fh.write("t_ns,x,y,z,sigma\n")
-        for f in case.fixes:
-            fh.write(f"{int(f.t_ns)},{f.p_W[0]:.17g},{f.p_W[1]:.17g},{f.p_W[2]:.17g},{f.sigma:.17g}\n")
-    (out / "config.yaml").write_text(_config_yaml(case))
-    rows = run_python(case)
+    write_imu_csv(out / "imu.csv", case.imu)
+    write_gps_csv(out / "gps.csv", case.fixes)
+    (out / "config.yaml").write_text(config_yaml(case))
+    return out
+
+
+def write_python_log(path: str | Path, rows: np.ndarray) -> None:
     fmt = ["%d", "%d"] + ["%.17g"] * (rows.shape[1] - 3) + ["%d"]
-    np.savetxt(out / "python_log.csv", rows, fmt=fmt, delimiter=",", header=log_header(), comments="")
+    np.savetxt(path, rows, fmt=fmt, delimiter=",", header=log_header(), comments="")
+
+
+def export(name: str, out_dir: str | Path) -> tuple[Case, np.ndarray]:
+    """Write a scenario's four files to ``out_dir``; returns the case and Python's rows."""
+    case = SCENARIOS[name]()
+    out = write_case(case, out_dir)
+    rows = run_python(case)
+    write_python_log(out / "python_log.csv", rows)
     return case, rows

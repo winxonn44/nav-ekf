@@ -232,3 +232,141 @@ pytest -s tests/test_cpp_parity.py
 cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DNAVEKF_BUILD_TESTS=OFF && cmake --build build-release
 build-release/navekf_bench --benchmark_repetitions=20 --benchmark_report_aggregates_only=true --benchmark_min_time=0.05s
 ```
+
+## E4: EuRoC machine hall
+
+Five machine-hall sequences, real ADIS16448 IMU at 200 Hz (`configs/euroc.yaml`, data in [`data.md`](data.md)). **The position fixes are synthesized** from the
+ground truth plus seeded white noise (10 Hz, σ = 0.10 m per axis). EuRoC has no real position sensor to fuse. So ATE *with* fixes
+largely reflects the noise we injected, and is not a measure of real-world positioning; **the outage drift is the informative result.** The IMU noise densities are the
+`sensor.yaml` values, **untuned** (tuning is E5). The filter is the C++ one for all runs; one sequence is also checked against Python, below.
+
+### What the data turned out to be
+
+<!-- e4:tables:data:start -->
+| sequence | IMU [s] | GT starts after IMU [s] | begins still | still used [s] | filter runs [s] | tilt correction [°] | gravity tilt of GT frame [°] | implied g |
+|---|---|---|---|---|---|---|---|---|
+| MH_01_easy | 184.1 | 1.08 | no | 22.0–30.0 | 153.0 | 0.89 | 0.001 | 9.8082 |
+| MH_02_easy | 152.0 | 0.90 | no | 27.5–29.5 | 121.4 | 0.89 | 0.002 | 9.8086 |
+| MH_03_medium | 135.0 | 2.39 | no | 10.5–13.0 | 120.9 | 0.79 | 0.004 | 9.8078 |
+| MH_04_difficult | 101.6 | 1.67 | no | 12.5–14.5 | 85.9 | 0.82 | 0.002 | 9.8082 |
+| MH_05_difficult | 113.6 | 1.40 | yes | 0.0–3.0 | 109.5 | 0.71 | 0.001 | 9.8082 |
+<!-- e4:tables:data:end -->
+
+Checked rather than assumed (columns above from `data_report`, rerun by `run_euroc.py`):
+
+- **Timestamps:** no duplicates, no gaps (IMU `dt` 4.999936–5.000192 ms in all five). Ground truth starts 0.9–2.4 s after the IMU and ends about 1.1 s before it. Its timestamps sit on IMU timestamps to within 256 ns (rounding), so no split-step was needed; fixes are made at IMU timestamps.
+- **Extrinsics:** `T_BS` is the identity in both `sensor.yaml` files. Fitting a rotation between the gyro and the ground-truth body rate gives under 0.01° in every sequence. A one-off regression of the specific-force residual on `ω̇×`/`ω×ω×` (not in the pipeline) gives a lever arm of at most 4 mm. The filter's body frame is the IMU frame; **its x axis points roughly up, so the body is not FLU** and ZYX roll/pitch would sit near −90°.
+- **Ground-truth frame:** z is gravity-aligned. Averaged over each sequence, the gravity implied by `dv/dt − R(a_m − b_a)` tilts 0.001–0.004° from −z, with magnitude 9.808 (the config keeps 9.81; the filter absorbs the rest in `b_a`).
+- **Ground truth is not independent of the IMU.** It is a batch solution over Leica positions and this same IMU, and its attitude comes from these gyros (the file says so). Attitude and bias comparisons against it are therefore not independent checks.
+- **Stillness** is measured on the IMU alone (every 0.5 s window with per-axis accel std < 0.1 m/s² and gyro std < 0.01 rad/s, at least 1 s). **Only MH_05 begins still.** MH_01–MH_04 are moving or shaken at the start. Rather than guess a start state, the filter starts at the end of the first still segment that ends inside ground-truth coverage, which discards the first 3–30 s of each sequence (column "still used").
+
+Initialization (design B2): tilt from the averaged specific force, heading from ground truth, using the smallest rotation that puts measured gravity on +z (no Euler angles; see the x-up note). `b_g` is the still gyro mean and `b_a = 0`, `v = 0`, with `p` drawn from ground truth with the fix noise. The tilt correction of 0.7–0.9° is about what an uncompensated 0.14 m/s² accel bias produces. `P₀` is `static_init_P0`, with `σ_ba0 = 0.1`, `σ_bg0 = 2e-3` rad/s and `σ_yaw = 0.02` rad; the gyro-bias value is widened from the averaging noise because the still gyro means differ from the ground-truth batch biases by up to 1.4e-3 rad/s. All of these were fixed before any filter run; `σ_yaw` is a guess, because ground-truth attitude accuracy is unpublished.
+
+### Accuracy with fixes (no outage)
+
+**ATE, SE(3) aligned** is evo's Umeyama-aligned RMSE (`evo_ape -a`). **ATE, no alignment** is the raw RMSE in the EuRoC frame, which is meaningful here because the fixes are in that frame.
+
+<!-- e4:tables:accuracy:start -->
+| sequence | ATE, SE(3) aligned [m] | ATE, no alignment [m] | RPE trans (1 s) [m] | RPE rot (1 s) [°] | fixes | rejected | mean NIS |
+|---|---|---|---|---|---|---|---|
+| MH_01_easy | 0.089 | 0.092 | 0.080 | 0.639 | 1530 | 33 | 3.54 |
+| MH_02_easy | 0.082 | 0.084 | 0.071 | 0.525 | 1214 | 18 | 3.31 |
+| MH_03_medium | 0.082 | 0.083 | 0.078 | 0.409 | 1209 | 19 | 3.29 |
+| MH_04_difficult | 0.082 | 0.086 | 0.063 | 0.344 | 860 | 20 | 3.40 |
+| MH_05_difficult | 0.089 | 0.091 | 0.076 | 0.447 | 1095 | 15 | 3.32 |
+<!-- e4:tables:accuracy:end -->
+
+The ATE is about 0.08–0.09 m against an injected per-axis fix noise of 0.10 m, and alignment changes it by at most 4 mm: both are what you expect when the fixes come from ground truth. **Mean NIS is a diagnostic, not a consistency claim.** It runs 3.3–3.5, above the 3 of a consistent filter, and 1.4–2.3% of fixes are rejected at the 1% gate. NEES is not reported: it needs truth for attitude and bias, ground truth is not independent of the IMU, and the true noise is unknown.
+
+### Outages: position error against time since the last fix
+
+Fixes are removed in `[start, start + D)` for D = 10, 30 and 60 s, one filter run per window. The first window starts 20 s after the filter and each later one follows after 5 s of fixes, with the last ending at least 5 s before ground truth stops. The windows follow only from the config (`outage_windows`), and the seeds are fixed.
+
+**Leaving the envelope** was defined before looking at any outage error, and two measures are reported: the norm check (`‖e‖ > 3√tr P_pp`, the red dashed lines in the figure) and the stricter per-axis check (`|e_i| > 3σ_i` for any axis at any step). **Locked out** means the 99% gate never accepted another fix after the outage. The floor is §6 dead reckoning from ground truth with the ground-truth biases, so no filter state is involved; it is the error against this ground truth that this IMU and integrator give with a perfect start.
+
+<!-- e4:tables:outages:start -->
+| sequence | outage [s] | windows | end error, median [m] | end error, max [m] | 3σ radius at end, median [m] | floor (from truth, no filter), median [m] | left ‖e‖ envelope | left per-axis 3σ | locked out |
+|---|---|---|---|---|---|---|---|---|---|
+| MH_01_easy | 10 | 8 | 3.37 | 7.77 | 3.59 | 1.17 | 3/8 | 7/8 | 5/8 |
+| MH_01_easy | 30 | 3 | 55.23 | 82.36 | 41.57 | 15.05 | 3/3 | 3/3 | 3/3 |
+| MH_01_easy | 60 | 2 | 351.67 | 519.10 | 380.53 | 131.12 | 1/2 | 2/2 | 2/2 |
+| MH_02_easy | 10 | 6 | 2.84 | 5.45 | 3.77 | 0.61 | 2/6 | 5/6 | 2/6 |
+| MH_02_easy | 30 | 2 | 37.45 | 56.28 | 45.08 | 6.79 | 1/2 | 1/2 | 1/2 |
+| MH_02_easy | 60 | 1 | 293.71 | 293.71 | 265.63 | 47.05 | 1/1 | 1/1 | 1/1 |
+| MH_03_medium | 10 | 6 | 3.00 | 4.03 | 3.76 | 1.17 | 0/6 | 3/6 | 2/6 |
+| MH_03_medium | 30 | 2 | 30.76 | 34.77 | 45.84 | 9.36 | 0/2 | 1/2 | 0/2 |
+| MH_03_medium | 60 | 1 | 152.82 | 152.82 | 235.84 | 28.60 | 0/1 | 0/1 | 0/1 |
+| MH_04_difficult | 10 | 4 | 4.12 | 5.13 | 4.24 | 0.87 | 2/4 | 3/4 | 3/4 |
+| MH_04_difficult | 30 | 1 | 49.83 | 49.83 | 54.63 | 13.27 | 0/1 | 1/1 | 1/1 |
+| MH_04_difficult | 60 | 1 | 350.00 | 350.00 | 300.82 | 61.32 | 1/1 | 1/1 | 1/1 |
+| MH_05_difficult | 10 | 5 | 3.36 | 6.35 | 4.41 | 0.76 | 2/5 | 4/5 | 0/5 |
+| MH_05_difficult | 30 | 2 | 58.29 | 74.46 | 63.44 | 13.84 | 1/2 | 2/2 | 2/2 |
+| MH_05_difficult | 60 | 1 | 341.98 | 341.98 | 309.49 | 76.01 | 1/1 | 1/1 | 1/1 |
+<!-- e4:tables:outages:end -->
+
+![Outage drift](figures/e4_outage_drift.png)
+
+**Result (fix-noise seed 0; the next section gives the spread over 10 seeds).** Over the 45 windows, the error left the per-axis envelope in 22 of 29 windows for 10 s, 8 of 10 for 30 s and 5 of 6 for 60 s (norm check: 9/29, 5/10, 4/6). **The filter is overconfident during outages on this data, without tuning.** Across all windows the median final error is 3.3 m after 10 s, 48 m after 30 s and 318 m after 60 s (153–519 m at 60 s), far outside the room, as expected for a MEMS IMU dead-reckoning for a minute. After 24 of the 45 outages the gate rejected every later fix for the rest of the run. Post-outage lock-out already showed up rarely in E2 (2 of 500 runs); on this data it is common and needs its own fix (a re-acquisition rule).
+
+### How much the fix-noise seed matters
+
+Everything above uses one draw of the fix noise (seed 0). All 45 outage runs were repeated under 10 seeds (`fixes.seed + 100·j`), with the windows, config and the number of seeds fixed before running them. Seed 0 is the baseline and reproduces it exactly. For each seed, the end-error statistic is the median over the row's windows; the exit and lock-out statistics are counts of windows.
+
+<!-- e4:tables:spread:start -->
+| sequence | outage [s] | windows | end error, median over windows: seed 0 / median over seeds [m] | range over seeds [m] | left per-axis 3σ: seed 0 / median / range | left ‖e‖ envelope: seed 0 / median / range | locked out: seed 0 / median / range |
+|---|---|---|---|---|---|---|---|
+| **all** | 10 | 29 | 3.3 / 3.3 | 2.9–3.6 | 22 / 23.0 / 22–26 | 9 / 11.0 / 8–13 | 12 / 12.5 / 10–16 |
+| **all** | 30 | 10 | 48.1 / 48.4 | 45.5–53.9 | 8 / 9.0 / 8–9 | 5 / 6.0 / 5–8 | 7 / 7.0 / 6–8 |
+| **all** | 60 | 6 | 317.8 / 317.3 | 300.8–338.8 | 5 / 6.0 / 5–6 | 4 / 4.0 / 3–6 | 5 / 5.0 / 4–5 |
+| MH_01_easy | 10 | 8 | 3.4 / 3.3 | 2.8–3.6 | 7 / 6.0 / 4–8 | 3 / 3.0 / 2–4 | 5 / 5.0 / 4–6 |
+| MH_01_easy | 30 | 3 | 55.2 / 58.3 | 55.2–64.7 | 3 / 3.0 / 3–3 | 3 / 3.0 / 2–3 | 3 / 3.0 / 3–3 |
+| MH_01_easy | 60 | 2 | 351.7 / 330.8 | 301.8–356.1 | 2 / 2.0 / 2–2 | 1 / 1.0 / 1–2 | 2 / 2.0 / 1–2 |
+| MH_02_easy | 10 | 6 | 2.8 / 2.7 | 2.3–3.3 | 5 / 5.0 / 4–6 | 2 / 2.0 / 1–3 | 2 / 2.0 / 1–2 |
+| MH_02_easy | 30 | 2 | 37.5 / 38.2 | 35.9–44.5 | 1 / 1.0 / 1–2 | 1 / 1.0 / 1–1 | 1 / 1.0 / 1–1 |
+| MH_02_easy | 60 | 1 | 293.7 / 313.4 | 282.2–345.1 | 1 / 1.0 / 1–1 | 1 / 1.0 / 1–1 | 1 / 1.0 / 1–1 |
+| MH_03_medium | 10 | 6 | 3.0 / 3.2 | 2.7–3.5 | 3 / 4.0 / 3–5 | 0 / 2.5 / 0–4 | 2 / 2.0 / 2–3 |
+| MH_03_medium | 30 | 2 | 30.8 / 30.8 | 23.9–35.1 | 1 / 2.0 / 1–2 | 0 / 1.0 / 0–1 | 0 / 0.0 / 0–1 |
+| MH_03_medium | 60 | 1 | 152.8 / 144.2 | 104.0–152.8 | 0 / 1.0 / 0–1 | 0 / 0.0 / 0–1 | 0 / 0.0 / 0–0 |
+| MH_04_difficult | 10 | 4 | 4.1 / 4.1 | 3.9–4.7 | 3 / 3.5 / 3–4 | 2 / 1.0 / 1–3 | 3 / 3.0 / 2–3 |
+| MH_04_difficult | 30 | 1 | 49.8 / 44.9 | 43.1–51.6 | 1 / 1.0 / 1–1 | 0 / 0.0 / 0–1 | 1 / 1.0 / 1–1 |
+| MH_04_difficult | 60 | 1 | 350.0 / 321.3 | 302.8–363.0 | 1 / 1.0 / 1–1 | 1 / 1.0 / 1–1 | 1 / 1.0 / 1–1 |
+| MH_05_difficult | 10 | 5 | 3.4 / 3.1 | 2.8–3.4 | 4 / 4.5 / 4–5 | 2 / 2.0 / 1–2 | 0 / 1.0 / 0–3 |
+| MH_05_difficult | 30 | 2 | 58.3 / 63.5 | 50.5–69.6 | 2 / 2.0 / 1–2 | 1 / 1.0 / 1–2 | 2 / 2.0 / 1–2 |
+| MH_05_difficult | 60 | 1 | 342.0 / 371.6 | 294.7–401.4 | 1 / 1.0 / 1–1 | 1 / 1.0 / 0–1 | 1 / 1.0 / 1–1 |
+<!-- e4:tables:spread:end -->
+
+**The pooled result does not depend on the seed.** Over the 10 seeds, the median end error stays within 2.9–3.6 m at 10 s, 45.5–53.9 m at 30 s and 300.8–338.8 m at 60 s. Of the 45 windows, 35–41 leave the per-axis envelope (81%, 86% and 93% of the 10, 30 and 60 s windows on average), 18–25 leave the norm envelope and 21–28 end locked out. Seed 0 is at the favorable end of the exit counts (35 and 18), so the seed-0 summary above slightly understates how often the envelope is left.
+
+**A single sequence does depend on it.** MH_03's 60 s drift ranges from 104 to 153 m, with seed 0 at the top, and its 10 s norm exits range from 0 to 4 of 6. Quote the pooled numbers with their range, not one sequence from one seed.
+
+**What this spread covers:** only the fix noise and the initial-position draw change. The IMU recordings, the five flights and the windows do not, and windows within a sequence share data, so this is not a confidence interval for a different flight.
+
+### Why the error leaves the envelope
+
+From `scripts/diagnose_euroc.py`:
+
+1. **The process noise is far too small for a flying rotorcraft.** In flight, the amplitude spectral density in the 5–40 Hz band is about 0.07 m/s²/√Hz for the accelerometer and 5–7e-3 rad/s/√Hz for the gyro, **roughly 30–40× the `sensor.yaml` values**; even still it is about 2–4×. The datasheet densities describe a quiet bench, not a vibrating airframe. This is the unmodelled term; the filter is told the IMU is far better than it really is.
+2. **That understated noise makes the filter's state errors larger than its sigmas when the outage starts.** At the last fix before each of the 45 outages, the worst-axis error in velocity, attitude, accel bias and gyro bias, against ground truth and in the filter's own σ, has a median of 2.3–2.7 and reaches 7.5. (Ground truth is not independent of the IMU, so this is a diagnostic.)
+3. **A one-time diagnostic with the white-noise densities multiplied by 30** (MH_01 and MH_03 only, same seeds and windows, not part of the reported results) removes every envelope exit and lock-out and brings mean NIS to 2.8–2.9 and rejection to 0.8–1.0%. The drift itself does not improve, and at that scale the 3σ radius is 4–9× the error, so ×30 overshoots. The noise model explains the *overconfidence*, not the *drift*.
+4. **Drift has a floor that no filter state can remove.** Even started from ground truth, dead reckoning reaches a median of 1.0, 11.8 and 69 m at 10, 30 and 60 s. A midpoint integrator barely changes it (0.9, 10.7, 63 m), so integrator order is not the cause. Using ground-truth attitude cuts it to 0.6, 3.2 and 10 m, so **most of the floor is attitude error from integrating the gyro**, though the ground truth used for that comparison shares the gyro. Filter-state error adds the rest (median 3.3, 48, 318 m starting from the filter's state).
+
+What is not established: how much of the in-flight spectrum is true vibration against real motion, and how the excess noise maps into filter gains. Those belong to E5 (Allan variance and tuning); no noise value was changed for the numbers reported above.
+
+### Python against C++
+
+<!-- e4:tables:parity:start -->
+Parity on MH_01_easy (all 32127 log rows of the full-fix run and all rows of one 30 s outage run):
+
+| run | rows | max \|Δstate\| | max \|ΔP\| | max \|ΔP\| / max \|P\| | max \|ΔNIS\| | gate rejections |
+|---|---|---|---|---|---|---|
+| full | 32127 | 2.58e-13 | 4.76e-16 | 4.72e-14 | 1.18e-11 | 33 |
+| outage_30s | 31827 | 1.23e-10 | 2.18e-08 | 4.32e-14 | 2.78e-12 | 1031 |
+<!-- e4:tables:parity:end -->
+
+Regenerate (the release binary from the E3 commands; `~40 s` without `--seed-spread`; `evo` needed for the table):
+
+```bash
+python -I scripts/run_euroc.py --seed-spread --write-results docs/results.md   # tables (spread included), figure, TUM files under results/euroc/; a few minutes
+python -I scripts/diagnose_euroc.py                              # the diagnostics above
+python -I scripts/run_euroc.py --sequences MH_01_easy MH_03_medium --scale-imu-white 30 --out results/euroc_diag   # the diagnostic
+```
