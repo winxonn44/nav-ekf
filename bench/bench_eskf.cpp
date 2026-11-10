@@ -12,6 +12,10 @@
 
 namespace {
 std::atomic<std::size_t> g_new_calls{0};
+
+// Out of line on purpose: GCC inlines a replaced operator delete into its callers, sees free()
+// on a pointer from operator new, and raises -Wmismatched-new-delete (an error under -Werror).
+[[gnu::noinline]] void release(void* p) noexcept { std::free(p); }
 }  // namespace
 
 // Counts heap use for the "allocs_per_iter" counter (Eigen's own malloc is covered by
@@ -24,8 +28,8 @@ void* operator new(std::size_t n) {
   }
   return p;
 }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete(void* p) noexcept { release(p); }
+void operator delete(void* p, std::size_t) noexcept { release(p); }
 
 namespace navekf {
 namespace {

@@ -48,6 +48,10 @@ void* counted_aligned(const std::size_t n, const std::align_val_t a) {
   return p;
 }
 
+// Out of line on purpose: GCC inlines a replaced operator delete into its callers, sees free()
+// on a pointer from operator new, and raises -Wmismatched-new-delete (an error under -Werror).
+[[gnu::noinline]] void release(void* p) noexcept { std::free(p); }
+
 template <class Alloc>
 void* nothrow_alloc(const Alloc& alloc) noexcept {
   try {
@@ -76,18 +80,18 @@ void* operator new(std::size_t n, std::align_val_t a, const std::nothrow_t&) noe
 void* operator new[](std::size_t n, std::align_val_t a, const std::nothrow_t&) noexcept {
   return nothrow_alloc([n, a] { return counted_aligned(n, a); });
 }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
-void operator delete(void* p, std::align_val_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::align_val_t) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
-void operator delete(void* p, const std::nothrow_t&) noexcept { std::free(p); }
-void operator delete[](void* p, const std::nothrow_t&) noexcept { std::free(p); }
-void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free(p); }
-void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free(p); }
+void operator delete(void* p) noexcept { release(p); }
+void operator delete[](void* p) noexcept { release(p); }
+void operator delete(void* p, std::size_t) noexcept { release(p); }
+void operator delete[](void* p, std::size_t) noexcept { release(p); }
+void operator delete(void* p, std::align_val_t) noexcept { release(p); }
+void operator delete[](void* p, std::align_val_t) noexcept { release(p); }
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept { release(p); }
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { release(p); }
+void operator delete(void* p, const std::nothrow_t&) noexcept { release(p); }
+void operator delete[](void* p, const std::nothrow_t&) noexcept { release(p); }
+void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept { release(p); }
+void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept { release(p); }
 
 namespace navekf {
 namespace {
