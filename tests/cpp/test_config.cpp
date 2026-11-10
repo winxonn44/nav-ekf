@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -56,11 +57,12 @@ filter: {discretization: vanloan, reset: identity, gate: null, check_psd: true, 
 TEST(Config, FullPrecisionNumbersRoundTripBitForBit) {
   for (const double value : {0.1, 1.0 / 3.0, 2.7182818284590451e-5, -1.2345678901234567e+200,
                              4.9406564584124654e-324, 11.344866730144373}) {
-    char buf[64];  // NOLINT(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
-    (void)std::snprintf(buf, sizeof(buf), "%.17g", value);
-    const RunConfig c = parse_config(std::string("filter: {gate: ") + buf + "}\n" + kInitial);
+    std::array<char, 64> buf{};
+    (void)std::snprintf(buf.data(), buf.size(), "%.17g", value);
+    const RunConfig c =
+        parse_config(std::string("filter: {gate: ") + buf.data() + "}\n" + kInitial);
     ASSERT_TRUE(c.eskf.gate.has_value());
-    EXPECT_EQ(c.eskf.gate.value_or(-1.0), value) << buf;
+    EXPECT_EQ(c.eskf.gate.value_or(-1.0), value) << buf.data();
   }
 }
 
